@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars and customize
+aws_region = "us-east-1"
+
+# JSON with opencode API keys. At minimum:
+# opencode_secret_json = "{\"DEEPSEEK_API_KEY\":\"sk-...\"}"
+opencode_secret_json = ""
+
+# API key phones use to call the Lambda endpoint
+api_key = ""
+
+# Default GitHub config (optional — can be overridden per session via API)
+default_github_user  = ""
+github_token         = ""

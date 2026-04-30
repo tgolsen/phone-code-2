@@ -1,0 +1,141 @@
+#!/bin/bash
+set -e
+
+usage() {
+    echo "Usage: $0 <project-name>     Start a coding session"
+    echo "       $0 --stop [task-arn]   Stop current session"
+    echo "       $0 --help              Show this message"
+    echo ""
+    echo "Example: $0 my-awesome-project"
+    echo ""
+    echo "Config: ~/.phone-code-config (see config.example)"
+    exit "${1:-1}"
+}
+
+PROJECT="$1"
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    usage 0
+fi
+
+if [ "$1" = "--stop" ]; then
+    # Load config early for --stop
+    CONFIG_FILE="${PHONE_CODE_CONFIG:-$HOME/.phone-code-config}"
+    [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+    API_URL="${PHONE_CODE_API_URL:?PHONE_CODE_API_URL not set}"
+    API_KEY="${PHONE_CODE_API_KEY:?PHONE_CODE_API_KEY not set}"
+
+    TASK_ID="$2"
+    if [ -z "$TASK_ID" ]; then
+        # Try reading from state file
+        TASK_ID=$(cat /tmp/phone-code-task 2>/dev/null || echo '')
+    fi
+    if [ -z "$TASK_ID" ]; then
+        echo "Usage: $0 --stop <task-arn>"
+        echo "Or run after starting a session (reads /tmp/phone-code-task)"
+        exit 1
+    fi
+    ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ID', safe=''))" 2>/dev/null || echo "$TASK_ID")
+    echo "Stopping session: $TASK_ID"
+    curl -s -X DELETE "$API_URL/sessions?taskId=$ENCODED" -H "X-API-Key: $API_KEY"
+    rm -f /tmp/phone-code-task /tmp/phone-code-key /tmp/phone-code-key.pub
+    echo "Session stopped."
+    exit 0
+fi
+
+if [ -z "$PROJECT" ]; then
+    usage
+fi
+
+echo "Phone Code"
+echo "=========="
+
+# Load config
+CONFIG_FILE="${PHONE_CODE_CONFIG:-$HOME/.phone-code-config}"
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+fi
+
+API_URL="${PHONE_CODE_API_URL:?PHONE_CODE_API_URL not set — see config.example}"
+API_KEY="${PHONE_CODE_API_KEY:?PHONE_CODE_API_KEY not set — see config.example}"
+GITHUB_USER="${GITHUB_USER:-$(git config --global user.name || echo '')}"
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+
+# Generate ephemeral SSH key
+echo "Generating SSH key..."
+rm -f /tmp/phone-code-key /tmp/phone-code-key.pub
+ssh-keygen -t ed25519 -f /tmp/phone-code-key -N "" -C "phone-code-session" -q
+PUBKEY=$(cat /tmp/phone-code-key.pub)
+echo "Key generated."
+
+# Request session from Lambda
+echo "Requesting session..."
+RESPONSE=$(curl -s -X POST "$API_URL/sessions" \
+    -H "Content-Type: application/json" \
+    -H "X-API-Key: $API_KEY" \
+    -d "$(jq -nc \
+        --arg project "$PROJECT" \
+        --arg pubkey "$PUBKEY" \
+        --arg github_user "$GITHUB_USER" \
+        --arg github_token "$GITHUB_TOKEN" \
+        '{project: $project, pubkey: $pubkey, github_user: $github_user, github_token: $github_token}')")
+
+echo "$RESPONSE" | jq .
+
+HOST=$(echo "$RESPONSE" | jq -r '.host // empty')
+TASK_ARN=$(echo "$RESPONSE" | jq -r '.task_arn // empty')
+ERROR=$(echo "$RESPONSE" | jq -r '.error // empty')
+
+if [ -n "$ERROR" ]; then
+    echo "Error: $ERROR"
+    exit 1
+fi
+
+if [ "$HOST" = "pending" ] || [ "$HOST" = "resolving" ] || [ -z "$HOST" ]; then
+    echo "Waiting for container IP..."
+    ENCODED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ARN', safe=''))" 2>/dev/null || echo "$TASK_ARN")
+    for i in $(seq 1 15); do
+        sleep 2
+        CHECK=$(curl -s "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" 2>/dev/null || echo '{}')
+        HOST=$(echo "$CHECK" | jq -r '.host // empty')
+        if [ -n "$HOST" ] && [ "$HOST" != "pending" ] && [ "$HOST" != "resolving" ]; then
+            break
+        fi
+        echo "  Still waiting... ($((i * 2))s)"
+    done
+fi
+
+if [ "$HOST" = "pending" ] || [ "$HOST" = "resolving" ] || [ -z "$HOST" ]; then
+    echo "Failed to resolve container IP. Task: $TASK_ARN"
+    echo "You can manually check: aws ecs describe-tasks --cluster phone-code --tasks $TASK_ARN"
+    exit 1
+fi
+
+# Save task ARN for --stop
+echo "$TASK_ARN" > /tmp/phone-code-task
+ENCODED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ARN', safe=''))" 2>/dev/null || echo "$TASK_ARN")
+
+# Wait for SSH to be ready
+echo "Waiting for SSH on $HOST:2222..."
+for i in $(seq 1 10); do
+    if nc -z -w 2 "$HOST" 2222 2>/dev/null; then
+        break
+    fi
+    sleep 2
+done
+
+echo ""
+echo "Connecting to $PROJECT on $HOST..."
+echo "Session branch will be created automatically."
+echo "Type 'exit' or Ctrl+D when done."
+echo ""
+
+# SSH into the container
+ssh -t -i /tmp/phone-code-key -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null phonecoder@"$HOST"
+
+# Cleanup on exit
+echo ""
+echo "Session ended. Cleaning up..."
+curl -s -X DELETE "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" > /dev/null 2>&1
+rm -f /tmp/phone-code-task /tmp/phone-code-key /tmp/phone-code-key.pub
+echo "Done."
