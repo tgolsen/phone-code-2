@@ -1,0 +1,18 @@
+# Phone Code Configuration
+# Copy to ~/.phone-code-config and customize
+
+# Session broker API (from terraform output: api_endpoint)
+export PHONE_CODE_API_URL="https://abc123.execute-api.us-west-2.amazonaws.com"
+
+# API key for authenticating with the session broker (from terraform variable: api_key)
+export PHONE_CODE_API_KEY="your-api-key-here"
+
+# GitHub (optional — can be passed per-request, defaults set in Lambda)
+export GITHUB_USER="your-github-username"
+export GITHUB_TOKEN="github_pat_..."  # fine-grained PAT with repo push scope
+
+# Phone requirements
+# - curl
+# - ssh + ssh-keygen
+# - jq (for JSON parsing)
+# - nc / netcat (for port probing)

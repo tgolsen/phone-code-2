@@ -1,0 +1,71 @@
+# Environment files (SECURITY: Never commit secrets)
+.env
+.env.local
+.env.*.local
+.env.save
+.env.backup
+
+# Credentials and secrets
+credentials.json
+secrets.json
+config.local.*
+auth.json
+*.key
+*.pem
+
+# Database files (if using local SQLite)
+*.sqlite
+*.sqlite3
+*.db
+
+# IDE files
+.vscode/settings.json
+.idea/
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Language-specific
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+*.log
+
+# Build artifacts
+dist/
+build/
+*.exe
+*.dmg
+*.deb
+*.rpm
+
+# AI agent files are version controlled (do not ignore .agent/)
+# Security & Secrets
+.env*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+config/secrets/
+secrets/
+credentials/
+.aws/credentials
+.docker/config.json
+
+# Terraform state and secrets
+infra/.terraform/
+infra/terraform.tfvars
+infra/terraform.tfvars.bak
+infra/.terraform.lock.hcl
+infra/tfplan
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Session broker
+session-broker/node_modules/
+lambda.zip
