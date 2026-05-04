@@ -20,6 +20,7 @@ chown phonecoder:phonecoder /home/phonecoder/.ssh/authorized_keys
 
 # Start sshd
 /usr/sbin/sshd
+sleep 2
 echo "SSHD running on port 2222"
 
 # Clone or pull repo
