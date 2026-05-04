@@ -91,19 +91,25 @@ if [ -n "$ERROR" ]; then
     exit 1
 fi
 
-if [ "$HOST" = "pending" ] || [ "$HOST" = "resolving" ] || [ -z "$HOST" ]; then
-    echo "Waiting for container IP..."
-    ENCODED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ARN', safe=''))" 2>/dev/null || echo "$TASK_ARN")
-    for i in $(seq 1 15); do
-        sleep 2
-        CHECK=$(curl -s "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" 2>/dev/null || echo '{}')
-        HOST=$(echo "$CHECK" | jq -r '.host // empty')
-        if [ -n "$HOST" ] && [ "$HOST" != "pending" ] && [ "$HOST" != "resolving" ]; then
-            break
+echo "Waiting for container to start..."
+ENCODED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ARN', safe=''))" 2>/dev/null || echo "$TASK_ARN")
+MAX_WAIT=30
+for i in $(seq 1 $MAX_WAIT); do
+    sleep 3
+    CHECK=$(curl -s "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" 2>/dev/null || echo '{}')
+    HOST=$(echo "$CHECK" | jq -r '.host // empty')
+    STATUS=$(echo "$CHECK" | jq -r '.status // empty')
+
+    if [ "$STATUS" = "RUNNING" ] && [ -n "$HOST" ] && [ "$HOST" != "pending" ] && [ "$HOST" != "resolving" ]; then
+        if echo "$HOST" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)'; then
+            echo "  Private IP (waiting for public)..."
+            continue
         fi
-        echo "  Still waiting... ($((i * 2))s)"
-    done
-fi
+        echo "  Ready: $HOST"
+        break
+    fi
+    echo "  $((i * 3))s: $STATUS"
+done
 
 if [ "$HOST" = "pending" ] || [ "$HOST" = "resolving" ] || [ -z "$HOST" ]; then
     echo "Failed to resolve container IP. Task: $TASK_ARN"
@@ -117,12 +123,19 @@ ENCODED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_A
 
 # Wait for SSH to be ready
 echo "Waiting for SSH on $HOST:2222..."
-for i in $(seq 1 10); do
-    if nc -z -w 2 "$HOST" 2222 2>/dev/null; then
+SSH_READY=0
+for i in $(seq 1 25); do
+    if nc -z -w 3 "$HOST" 2222 2>/dev/null; then
+        echo "  SSH ready after $((i * 3))s"
+        SSH_READY=1
         break
     fi
-    sleep 2
+    sleep 3
 done
+
+if [ "$SSH_READY" -eq 0 ]; then
+    echo "Warning: SSH port not responding, but attempting connection anyway..."
+fi
 
 echo ""
 echo "Connecting to $PROJECT on $HOST..."
@@ -130,12 +143,12 @@ echo "Session branch will be created automatically."
 echo "Type 'exit' or Ctrl+D when done."
 echo ""
 
-# SSH into the container
-ssh -t -i /tmp/phone-code-key -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null phonecoder@"$HOST"
+# SSH into the container (ignore connection errors so cleanup runs)
+ssh -t -i /tmp/phone-code-key -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o IdentitiesOnly=yes -o PasswordAuthentication=no phonecoder@"$HOST" || true
 
 # Cleanup on exit
 echo ""
 echo "Session ended. Cleaning up..."
-curl -s -X DELETE "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" > /dev/null 2>&1
+curl -s -X DELETE "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" > /dev/null 2>&1 || true
 rm -f /tmp/phone-code-task /tmp/phone-code-key /tmp/phone-code-key.pub
 echo "Done."

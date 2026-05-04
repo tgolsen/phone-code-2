@@ -122,7 +122,26 @@ async function getTaskConnectionInfo(taskId) {
             new DescribeNetworkInterfacesCommand({ NetworkInterfaceIds: [eniId] })
         );
         const eni = eniResult.NetworkInterfaces?.[0];
-        const host = eni?.Association?.PublicIp || eni?.PrivateIpAddress || 'pending';
+
+        // Prefer public IP — if task is RUNNING but only private IP available,
+        // retry a few times for the public IP to be assigned
+        let host = eni?.Association?.PublicIp || eni?.PrivateIpAddress || 'pending';
+        const isPrivate = host !== 'pending' && host.match(/^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)/);
+
+        if (isPrivate && task.lastStatus === 'RUNNING') {
+            for (let i = 0; i < 5; i++) {
+                await new Promise((r) => setTimeout(r, 2000));
+                const retry = await ec2client.send(
+                    new DescribeNetworkInterfacesCommand({ NetworkInterfaceIds: [eniId] })
+                );
+                const updatedEni = retry.NetworkInterfaces?.[0];
+                if (updatedEni?.Association?.PublicIp) {
+                    host = updatedEni.Association.PublicIp;
+                    break;
+                }
+            }
+        }
+
         return { taskId, host, status: task.lastStatus, port: 2222 };
     } catch {
         return { taskId, host: 'resolving', status: task.lastStatus };
