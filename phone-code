@@ -52,6 +52,15 @@ fi
 echo "Phone Code"
 echo "=========="
 
+# Check required tools
+for cmd in curl jq ssh-keygen nc; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Error: '$cmd' is required but not installed."
+        echo "Install with your package manager (e.g. pkg install $cmd on Termux)"
+        exit 1
+    fi
+done
+
 # Load config
 CONFIG_FILE="${PHONE_CODE_CONFIG:-$HOME/.phone-code-config}"
 if [ -f "$CONFIG_FILE" ]; then
@@ -75,21 +84,31 @@ echo "Key generated."
 
 # Request session from Lambda
 echo "Requesting session..."
-RESPONSE=$(curl -s -X POST "$API_URL/sessions" \
+BODY=$(jq -nc \
+    --arg project "$PROJECT" \
+    --arg pubkey "$PUBKEY" \
+    --arg github_user "$GITHUB_USER" \
+    --arg github_token "$GITHUB_TOKEN" \
+    '{project: $project, pubkey: $pubkey, github_user: $github_user, github_token: $github_token}')
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$API_URL/sessions" \
     -H "Content-Type: application/json" \
     -H "X-API-Key: $API_KEY" \
-    -d "$(jq -nc \
-        --arg project "$PROJECT" \
-        --arg pubkey "$PUBKEY" \
-        --arg github_user "$GITHUB_USER" \
-        --arg github_token "$GITHUB_TOKEN" \
-        '{project: $project, pubkey: $pubkey, github_user: $github_user, github_token: $github_token}')")
+    -d "$BODY")
 
-echo "$RESPONSE" | jq .
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+RESPONSE_BODY=$(echo "$RESPONSE" | sed '$d')
 
-HOST=$(echo "$RESPONSE" | jq -r '.host // empty')
-TASK_ARN=$(echo "$RESPONSE" | jq -r '.task_arn // empty')
-ERROR=$(echo "$RESPONSE" | jq -r '.error // empty')
+if [ "$HTTP_CODE" != "202" ]; then
+    echo "API returned HTTP $HTTP_CODE:"
+    echo "$RESPONSE_BODY"
+    exit 1
+fi
+
+echo "$RESPONSE_BODY" | jq .
+
+HOST=$(echo "$RESPONSE_BODY" | jq -r '.host // empty')
+TASK_ARN=$(echo "$RESPONSE_BODY" | jq -r '.task_arn // empty')
+ERROR=$(echo "$RESPONSE_BODY" | jq -r '.error // empty')
 
 if [ -n "$ERROR" ]; then
     echo "Error: $ERROR"
