@@ -50,6 +50,7 @@ fi
 # Setup opencode (only if repo cloned successfully)
 if [ "$REPO_OK" -eq 1 ]; then
     cd "/workspace/$PROJECT"
+    chown -R phonecoder:phonecoder /workspace/"$PROJECT"
     HAS_REPO=1
 
     # Create session branch
