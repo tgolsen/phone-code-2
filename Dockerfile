@@ -50,9 +50,10 @@ RUN useradd -m -s /bin/bash phonecoder \
 # Workspace directory
 RUN mkdir -p /workspace && chown phonecoder:phonecoder /workspace
 
-# opencode config
-RUN mkdir -p /home/phonecoder/.opencode \
-    && chown -R phonecoder:phonecoder /home/phonecoder/.opencode
+# Pre-seed opencode config so first launch skips resolution
+RUN mkdir -p /home/phonecoder/.opencode
+COPY opencode.json /home/phonecoder/.opencode/config.json
+RUN chown -R phonecoder:phonecoder /home/phonecoder/.opencode
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
