@@ -12,6 +12,8 @@ usage() {
     exit "${1:-1}"
 }
 
+PHONE_CODE_DIR="${HOME}/.phone-code"
+
 PROJECT="$1"
 
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -28,17 +30,17 @@ if [ "$1" = "--stop" ]; then
     TASK_ID="$2"
     if [ -z "$TASK_ID" ]; then
         # Try reading from state file
-        TASK_ID=$(cat /tmp/phone-code-task 2>/dev/null || echo '')
+        TASK_ID=$(cat $PHONE_CODE_DIR/task 2>/dev/null || echo '')
     fi
     if [ -z "$TASK_ID" ]; then
         echo "Usage: $0 --stop <task-arn>"
-        echo "Or run after starting a session (reads /tmp/phone-code-task)"
+        echo "Or run after starting a session (reads $PHONE_CODE_DIR/task)"
         exit 1
     fi
     ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ID', safe=''))" 2>/dev/null || echo "$TASK_ID")
     echo "Stopping session: $TASK_ID"
     curl -s -X DELETE "$API_URL/sessions?taskId=$ENCODED" -H "X-API-Key: $API_KEY"
-    rm -f /tmp/phone-code-task /tmp/phone-code-key /tmp/phone-code-key.pub
+    rm -f $PHONE_CODE_DIR/task $PHONE_CODE_DIR/key $PHONE_CODE_DIR/key.pub
     echo "Session stopped."
     exit 0
 fi
@@ -61,11 +63,14 @@ API_KEY="${PHONE_CODE_API_KEY:?PHONE_CODE_API_KEY not set — see config.example
 GITHUB_USER="${GITHUB_USER:-$(git config --global user.name || echo '')}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
+mkdir -p "$PHONE_CODE_DIR"
+chmod 700 "$PHONE_CODE_DIR"
+
 # Generate ephemeral SSH key
 echo "Generating SSH key..."
-rm -f /tmp/phone-code-key /tmp/phone-code-key.pub
-ssh-keygen -t ed25519 -f /tmp/phone-code-key -N "" -C "phone-code-session" -q
-PUBKEY=$(cat /tmp/phone-code-key.pub)
+rm -f $PHONE_CODE_DIR/key $PHONE_CODE_DIR/key.pub
+ssh-keygen -t ed25519 -f $PHONE_CODE_DIR/key -N "" -C "phone-code-session" -q
+PUBKEY=$(cat $PHONE_CODE_DIR/key.pub)
 echo "Key generated."
 
 # Request session from Lambda
@@ -118,7 +123,7 @@ if [ "$HOST" = "pending" ] || [ "$HOST" = "resolving" ] || [ -z "$HOST" ]; then
 fi
 
 # Save task ARN for --stop
-echo "$TASK_ARN" > /tmp/phone-code-task
+echo "$TASK_ARN" > $PHONE_CODE_DIR/task
 ENCODED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ARN', safe=''))" 2>/dev/null || echo "$TASK_ARN")
 
 # Wait for SSH to be ready
@@ -144,11 +149,11 @@ echo "Type 'exit' or Ctrl+D when done."
 echo ""
 
 # SSH into the container (ignore connection errors so cleanup runs)
-ssh -t -i /tmp/phone-code-key -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o IdentitiesOnly=yes -o PasswordAuthentication=no phonecoder@"$HOST" || true
+ssh -t -i $PHONE_CODE_DIR/key -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o IdentitiesOnly=yes -o PasswordAuthentication=no phonecoder@"$HOST" || true
 
 # Cleanup on exit
 echo ""
 echo "Session ended. Cleaning up..."
 curl -s -X DELETE "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" > /dev/null 2>&1 || true
-rm -f /tmp/phone-code-task /tmp/phone-code-key /tmp/phone-code-key.pub
+rm -f $PHONE_CODE_DIR/task $PHONE_CODE_DIR/key $PHONE_CODE_DIR/key.pub
 echo "Done."
