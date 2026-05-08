@@ -12,7 +12,14 @@ terraform {
     }
   }
 
-  backend "local" {}
+  backend "s3" {
+    bucket      = "phone-code-tfstate-144600480929"
+    key         = "phone-code/terraform.tfstate"
+    region      = "us-west-2"
+    profile     = "phone-code"
+    use_lockfile = true
+    encrypt     = true
+  }
 }
 
 provider "aws" {
