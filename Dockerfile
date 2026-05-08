@@ -22,6 +22,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
 # opencode
 RUN npm install -g opencode-ai
 
+# Pre-install opencode AI provider packages (avoids slow first launch)
+RUN npm install -g @ai-sdk/openai-compatible
+
 # AWS CLI v2
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip \
     && unzip -q /tmp/awscliv2.zip -d /tmp \
