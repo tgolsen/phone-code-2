@@ -1,5 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
+
+# Check required tools FIRST
+for cmd in curl jq ssh-keygen nc; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Error: '$cmd' is required but not installed."
+        echo "Install on Termux: pkg install $(echo "$cmd" | sed 's/ssh-keygen/openssh/;s/nc/netcat-openbsd/')"
+        exit 1
+    fi
+done
 
 usage() {
     echo "Usage: $0 <project-name>     Start a coding session"
@@ -51,15 +60,6 @@ fi
 
 echo "Phone Code"
 echo "=========="
-
-# Check required tools
-for cmd in curl jq ssh-keygen nc; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "Error: '$cmd' is required but not installed."
-        echo "Install with your package manager (e.g. pkg install $cmd on Termux)"
-        exit 1
-    fi
-done
 
 # Load config
 CONFIG_FILE="${PHONE_CODE_CONFIG:-$HOME/.phone-code-config}"
