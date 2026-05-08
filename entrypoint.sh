@@ -91,6 +91,10 @@ AUTHJSON
                 \"baseURL\": \"https://api.deepseek.com/v1\"
             },
             \"models\": {
+                \"deepseek-v4-pro\": {
+                    \"name\": \"DeepSeek-V4-Pro\",
+                    \"tools\": true
+                },
                 \"deepseek-chat\": {
                     \"name\": \"DeepSeek-V3.2\",
                     \"tools\": true
@@ -102,7 +106,7 @@ AUTHJSON
             }
         }
     },
-    \"model\": \"deepseek/deepseek-chat\"
+    \"model\": \"deepseek/deepseek-v4-pro\"
 }
 EOFCFG
     "
