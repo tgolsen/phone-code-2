@@ -39,6 +39,12 @@ variable "default_github_user" {
   default     = ""
 }
 
+variable "image_tag" {
+  description = "Docker image tag or digest (default: latest, or pin with sha256:...)"
+  type        = string
+  default     = "latest"
+}
+
 # ── VPC / Network ────────────────────────────────────────────
 
 data "aws_vpc" "default" {
@@ -178,7 +184,7 @@ resource "aws_ecs_task_definition" "session" {
 
   container_definitions = jsonencode([{
     name  = "${var.project_name}-session"
-    image = "${aws_ecr_repository.app.repository_url}:latest"
+    image = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
     portMappings = [{
       containerPort = 2222
       hostPort      = 2222

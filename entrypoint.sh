@@ -160,6 +160,14 @@ fi
 
 # Create .bashrc that auto-launches opencode on login (if repo ok)
 echo "$PROJECT" > /home/phonecoder/.phone-project
+
+# .bash_profile ensures .bashrc runs for SSH login shells
+cat > /home/phonecoder/.bash_profile << 'PROFILE'
+if [ -f ~/.bashrc ]; then
+    . ~/.bashrc
+fi
+PROFILE
+
 cat > /home/phonecoder/.bashrc << 'BASHRC'
 if [ -f /etc/bashrc ]; then
     . /etc/bashrc
