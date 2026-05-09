@@ -13,7 +13,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket      = "phone-code-tfstate-144600480929"
+    bucket      = "phone-code-tfstate"
     key         = "phone-code/terraform.tfstate"
     region      = "us-west-2"
     profile     = "phone-code"

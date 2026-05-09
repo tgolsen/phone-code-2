@@ -69,3 +69,4 @@ infra/tfplan
 # Session broker
 session-broker/node_modules/
 lambda.zip
+backup/

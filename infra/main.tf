@@ -3,9 +3,10 @@ variable "aws_region" {
   default     = "us-west-2"
 }
 
-variable "aws_account_id" {
-  description = "AWS account ID"
-  default     = "144600480929"
+data "aws_caller_identity" "current" {}
+
+locals {
+  aws_account_id = data.aws_caller_identity.current.account_id
 }
 
 variable "project_name" {
@@ -262,7 +263,7 @@ resource "aws_iam_role_policy" "lambda" {
         ]
         Resource = [
           "${aws_ecs_cluster.app.arn}/*",
-          "arn:aws:ecs:${var.aws_region}:${var.aws_account_id}:task/${aws_ecs_cluster.app.name}/*",
+            "arn:aws:ecs:${var.aws_region}:${local.aws_account_id}:task/${aws_ecs_cluster.app.name}/*",
         ]
       },
       {

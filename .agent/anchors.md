@@ -7,7 +7,6 @@
 - **Key files**: `phone-code` (local client), `Dockerfile` + `entrypoint.sh` (container image), `session-broker/` (Lambda), `infra/` (Terraform)
 
 ## AWS Environment
-- **Account**: 144600480929
 - **Profile**: `phone-code` (IAM user: `phone-code-deploy`)
 - **Region**: `us-west-2`
 - **AWS CLI**: Always prefix with `AWS_PROFILE=phone-code` or set env var
@@ -19,8 +18,8 @@ AWS_PROFILE=phone-code aws sts get-caller-identity
 # Deploy infra
 cd infra && AWS_PROFILE=phone-code terraform apply
 
-# Push image
-AWS_PROFILE=phone-code aws ecr get-login-password | docker login --username AWS --password-stdin 144600480929.dkr.ecr.us-west-2.amazonaws.com
+# Push image (replace $AWS_ACCOUNT_ID with your account)
+AWS_PROFILE=phone-code aws ecr get-login-password | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com
 ```
 
 ## Development Commands (CRITICAL — don't guess)
@@ -42,7 +41,7 @@ terraform fmt -check infra/
 docker build -t phone-code .
 
 # Run container locally (test)
-docker run -e PUBKEY="$(cat ~/.ssh/id_ed25519.pub)" -e PROJECT="test" -e GITHUB_USER="tgolsen" -p 2222:2222 phone-code
+docker run -e PUBKEY="$(cat ~/.ssh/id_ed25519.pub)" -e PROJECT="test" -e GITHUB_USER="your-username" -p 2222:2222 phone-code
 ```
 
 ## Architecture
@@ -54,9 +53,9 @@ phone terminal (curl + ssh only)
   ├── 2. curl POST API → Lambda (session-broker)
   │       └── Lambda → ecs.runTask (Fargate, public IP, SG:2222)
   │       └── Container entrypoint: write pubkey → sshd → clone repo → session branch → opencode
-  ├── 3. ssh → opencode session
-  ├── 4. Auto-push to mobile-YYYYMMDD-HHMMSS
-  └── 5. On exit → curl DELETE API → Lambda → ecs.stopTask
+  ├── 3. ssh → opencode session (auto-launches)
+  ├── 4. Auto-push every 5 min, auto-stop after 15 min idle
+  └── 5. Reconnect: same command reattaches to running session
 ```
 
 ## Git Workflow
@@ -85,11 +84,9 @@ acli jira workitem transition --key KEY-XXXX --status "In Progress"
 - **NOT authorized**: Merging PRs, deployments, branch deletion (without explicit permission)
 
 ## Current Status
-- **Docker image**: DEFINED — Dockerfile + entrypoint.sh
-- **Lambda**: DEFINED — session-broker (POST/GET/DELETE)
-- **Terraform**: DEFINED — ECR, ECS, IAM, Secrets Manager, API Gateway, Lambda
-- **Local client**: DEFINED — phone-code script (keygen → API → SSH → cleanup)
+- **Docker image**: DEPLOYED — Fargate task runs ARM64 container
+- **Lambda**: DEPLOYED — session-broker (POST/GET/DELETE)
+- **Terraform**: DEPLOYED — ECR, ECS, IAM, Secrets Manager, API Gateway, Lambda
+- **Local client**: DEPLOYED — phone-code script (keygen → API → SSH → reconnect)
 - **GHA workflow**: DEFINED — build image → push ECR → deploy Lambda
-- **Infra deployed**: NOT YET — need to run `terraform apply`
-- **Image pushed**: NOT YET — need GHA run or manual push
-- **End-to-end tested**: NOT YET
+- **End-to-end tested**: VERIFIED — works on Android/Termux, iSH, a-Shell

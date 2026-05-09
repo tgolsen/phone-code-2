@@ -5,9 +5,9 @@ When working with this project, you may need detailed references for various too
 ## Tools (On-Demand Access)
 
 ### CLI Tools
-- **GitHub CLI**: `/Users/tolsen/src/github.com/tgolsen/claude-code-templates/references/tools/gh-cli-reference.md`
+- **GitHub CLI**: `~/src/github.com/tgolsen/claude-code-templates/references/tools/gh-cli-reference.md`
   - PR management, repository operations, authentication
-- **Atlassian CLI**: `/Users/tolsen/src/github.com/tgolsen/claude-code-templates/references/tools/acli-reference.md`
+- **Atlassian CLI**: `~/src/github.com/tgolsen/claude-code-templates/references/tools/acli-reference.md`
   - Jira ticket management, ADF formatting, status transitions
 
 
@@ -22,4 +22,4 @@ When working with this project, you may need detailed references for various too
 
 - Tool references are maintained in claude-code-templates for cross-project use
 - Update this index when you discover you need a new tool reference
-- Replace `/Users/tolsen/src/github.com/tgolsen/claude-code-templates` with actual path to claude-code-templates repository
+- Replace `~/src/github.com/tgolsen/claude-code-templates` with actual path to claude-code-templates repository
