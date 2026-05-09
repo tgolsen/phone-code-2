@@ -25,8 +25,8 @@ phone terminal (curl + ssh only)
   ├── 1. Generate ephemeral SSH key
   ├── 2. Request session via API (Lambda)
   │       └── Lambda provisions Fargate task with pubkey injected
-  ├── 3. SSH into container → opencode session ready
-  └── 4. On disconnect: container destroyed
+  ├── 3. SSH into container → opencode auto-launches
+  └── 4. On disconnect: container stays alive 15 min, auto-saves, then shuts down
 ```
 
 ### What the container provides
@@ -36,7 +36,7 @@ phone terminal (curl + ssh only)
 - shellcheck, jq, and standard GNU tools
 
 ### Safety
-- Ephemeral container — nothing persists after disconnect
+- Ephemeral container — saves every 5 min, auto-stops after 15 min idle
 - SSH key-only auth, generated fresh each session
 - OpenCode API key in AWS Secrets Manager (never on phone)
 - GitHub token scoped to repo push only
@@ -93,7 +93,7 @@ The script:
 2. Sends pubkey + project name to the session broker API
 3. Waits for container ready
 4. Opens SSH connection — you land in opencode
-5. On disconnect: container is destroyed
+5. On disconnect: session stays alive 15 min for reconnection, then auto-saves and stops
 
 ## Development Workflow
 
@@ -134,9 +134,9 @@ npm install
 ## Architecture
 
 ```
-├── phone-code              # Local script: keygen → curl API → ssh → cleanup
+├── phone-code              # Local script: keygen → curl API → ssh → reconnect
 ├── Dockerfile              # ubuntu:22.04 + git + sshd + opencode + shellcheck
-├── entrypoint.sh           # Container startup: pubkey → sshd → clone → opencode
+├── entrypoint.sh           # Container startup: pubkey → sshd → clone → opencode + watchdog
 ├── session-broker/         # Lambda: POST /sessions, DELETE /sessions/{id}
 ├── infra/                  # Terraform: ECR, ECS, IAM, Secrets Manager, API Gateway
 ├── .github/workflows/      # CI: build image → push ECR → deploy

@@ -14,5 +14,7 @@ export GITHUB_TOKEN="github_pat_..."  # fine-grained PAT with repo push scope
 # Phone requirements
 # - curl
 # - ssh + ssh-keygen
-# - jq (for JSON parsing)
-# - nc / netcat (for port probing)
+# 
+# iSH:     apk add curl openssh
+# Termux:  pkg install curl openssh
+# a-Shell: built-in (no extra packages needed)

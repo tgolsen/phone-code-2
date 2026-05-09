@@ -3,11 +3,12 @@ set -e
 
 trap 'echo "FATAL: command failed at line $LINENO" >&2' ERR
 
-# Check required tools FIRST
-for cmd in curl jq ssh-keygen nc; do
+# Check required tools
+for cmd in curl ssh-keygen; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "Error: '$cmd' is required but not installed."
-        echo "Install on Termux: pkg install $(echo "$cmd" | sed 's/ssh-keygen/openssh/;s/nc/netcat-openbsd/')"
+        echo "Install on Termux: pkg install curl openssh"
+        echo "Install on iSH:    apk add curl openssh"
         exit 1
     fi
 done
@@ -46,7 +47,7 @@ if [ "$1" = "--stop" ]; then
         echo "Or run after starting a session (reads $PHONE_CODE_DIR/task)"
         exit 1
     fi
-    ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ID', safe=''))" 2>/dev/null || echo "$TASK_ID")
+    ENCODED=$(echo "$TASK_ID" | sed 's/:/%3A/g;s/\//%2F/g')
     echo "Stopping session: $TASK_ID"
     curl -s -X DELETE "$API_URL/sessions?taskId=$ENCODED" -H "X-API-Key: $API_KEY"
     rm -f $PHONE_CODE_DIR/task $PHONE_CODE_DIR/key $PHONE_CODE_DIR/key.pub $PHONE_CODE_DIR/project
@@ -75,6 +76,23 @@ GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 mkdir -p "$PHONE_CODE_DIR"
 chmod 700 "$PHONE_CODE_DIR"
 
+# ── Helpers (no jq dependency) ───────────────────────────────
+
+# Extract a string value from simple flat JSON: json_val "$json" "key"
+json_val() {
+    echo "$1" | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/.*: *"//;s/"$//'
+}
+
+# URL-encode an ECS task ARN (only : and / need encoding)
+urlencode() {
+    echo "$1" | sed 's/:/%3A/g;s/\//%2F/g'
+}
+
+# Test if a TCP port is open (bash builtin /dev/tcp)
+tcp_ready() {
+    timeout 3 bash -c "echo >/dev/tcp/\$1/\$2" _ "$1" "$2" 2>/dev/null
+}
+
 # ── Check for existing session to reconnect ──────────────────
 
 SAVED_TASK=$(cat $PHONE_CODE_DIR/task 2>/dev/null || echo '')
@@ -82,21 +100,20 @@ SAVED_KEY=$PHONE_CODE_DIR/key
 RECONNECT=0
 
 if [ -n "$SAVED_TASK" ] && [ -f "$SAVED_KEY" ]; then
-    ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$SAVED_TASK', safe=''))" 2>/dev/null || echo "$SAVED_TASK")
+    ENCODED=$(urlencode "$SAVED_TASK")
 
     set +e
     CHECK=$(curl -s "$API_URL/sessions?taskId=$ENCODED" -H "X-API-Key: $API_KEY" 2>/dev/null || echo '{}')
     set -e
 
-    STATUS=$(echo "$CHECK" | jq -r '.status // empty')
-    HOST=$(echo "$CHECK" | jq -r '.host // empty')
+    STATUS=$(json_val "$CHECK" "status")
+    HOST=$(json_val "$CHECK" "host")
 
     if [ "$STATUS" = "RUNNING" ] && [ -n "$HOST" ] && [ "$HOST" != "pending" ] && [ "$HOST" != "resolving" ] && ! echo "$HOST" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)'; then
         echo "Existing session found: $SAVED_TASK"
         echo "Reconnecting to $HOST..."
         RECONNECT=1
     else
-        # Session is gone — clean up stale state
         rm -f $PHONE_CODE_DIR/task $PHONE_CODE_DIR/key $PHONE_CODE_DIR/key.pub $PHONE_CODE_DIR/project
     fi
 fi
@@ -111,15 +128,7 @@ if [ "$RECONNECT" -eq 0 ]; then
     echo "Key generated."
 
     echo "Requesting session..."
-    BODY=$(jq -nc \
-        --arg project "$PROJECT" \
-        --arg pubkey "$PUBKEY" \
-        --arg github_user "$GITHUB_USER" \
-        --arg github_token "$GITHUB_TOKEN" \
-        '{project: $project, pubkey: $pubkey, github_user: $github_user, github_token: $github_token}') || {
-        echo "Error: failed to build request body (jq error)"
-        exit 1
-    }
+    BODY="{\"project\":\"$PROJECT\",\"pubkey\":\"$PUBKEY\",\"github_user\":\"$GITHUB_USER\",\"github_token\":\"$GITHUB_TOKEN\"}"
 
     set +e
     HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$API_URL/sessions" \
@@ -145,29 +154,28 @@ if [ "$RECONNECT" -eq 0 ]; then
         exit 1
     fi
 
-    echo "$RESPONSE_BODY" | jq .
+    echo "$RESPONSE_BODY"
 
-    HOST=$(echo "$RESPONSE_BODY" | jq -r '.host // empty')
-    TASK_ARN=$(echo "$RESPONSE_BODY" | jq -r '.task_arn // empty')
-    ERROR=$(echo "$RESPONSE_BODY" | jq -r '.error // empty')
+    HOST=$(json_val "$RESPONSE_BODY" "host")
+    TASK_ARN=$(json_val "$RESPONSE_BODY" "task_arn")
+    ERROR=$(json_val "$RESPONSE_BODY" "error")
 
     if [ -n "$ERROR" ]; then
         echo "Error: $ERROR"
         exit 1
     fi
 
-    # Save task ARN and project for reconnect
     echo "$TASK_ARN" > $PHONE_CODE_DIR/task
     echo "$PROJECT" > $PHONE_CODE_DIR/project
 
     echo "Waiting for container to start..."
-    ENCODED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ARN', safe=''))" 2>/dev/null || echo "$TASK_ARN")
+    ENCODED_ARN=$(urlencode "$TASK_ARN")
     MAX_WAIT=30
     for i in $(seq 1 $MAX_WAIT); do
         sleep 3
         CHECK=$(curl -s "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" 2>/dev/null || echo '{}')
-        HOST=$(echo "$CHECK" | jq -r '.host // empty')
-        STATUS=$(echo "$CHECK" | jq -r '.status // empty')
+        HOST=$(json_val "$CHECK" "host")
+        STATUS=$(json_val "$CHECK" "status")
 
         if [ "$STATUS" = "RUNNING" ] && [ -n "$HOST" ] && [ "$HOST" != "pending" ] && [ "$HOST" != "resolving" ]; then
             if echo "$HOST" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)'; then
@@ -182,15 +190,13 @@ if [ "$RECONNECT" -eq 0 ]; then
 
     if [ "$HOST" = "pending" ] || [ "$HOST" = "resolving" ] || [ -z "$HOST" ]; then
         echo "Failed to resolve container IP. Task: $TASK_ARN"
-        echo "You can manually check: aws ecs describe-tasks --cluster phone-code --tasks $TASK_ARN"
         exit 1
     fi
 
-    # Wait for SSH to be ready
     echo "Waiting for SSH on $HOST:2222..."
     SSH_READY=0
     for i in $(seq 1 25); do
-        if nc -z -w 3 "$HOST" 2222 2>/dev/null; then
+        if tcp_ready "$HOST" 2222; then
             echo "  SSH ready after $((i * 3))s"
             SSH_READY=1
             break
@@ -208,7 +214,6 @@ if [ "$RECONNECT" -eq 0 ]; then
     echo "Type 'exit' or Ctrl+D when done."
     echo ""
 else
-    # Reconnecting — just SSH with saved key
     echo ""
     echo "Session stays alive 15 min after disconnect. Reconnect: $0 $PROJECT"
     echo ""
