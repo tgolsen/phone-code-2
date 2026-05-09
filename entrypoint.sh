@@ -165,7 +165,7 @@ Project: $PROJECT
 Branch:  $BRANCH_NAME
 Repo:    /workspace/$PROJECT
 
-Type 'opencode' to start coding.
+OpenCode starts automatically on login.
 Auto-push is running every 5 minutes.
 Session auto-stops after 15 min idle.
 MOTD
@@ -200,7 +200,7 @@ cat /etc/motd
 PROJECT=$(cat /home/phonecoder/.phone-project 2>/dev/null || echo '')
 if [ -n "$PROJECT" ] && [ -d "/workspace/$PROJECT" ]; then
     cd "/workspace/$PROJECT"
-    opencode
+    exec opencode
 else
     cd /workspace
     echo ""
