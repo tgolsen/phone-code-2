@@ -13,7 +13,7 @@ for cmd in curl jq ssh-keygen nc; do
 done
 
 usage() {
-    echo "Usage: $0 <project-name>     Start a coding session"
+    echo "Usage: $0 <project-name>     Start or reconnect to a session"
     echo "       $0 --stop [task-arn]   Stop current session"
     echo "       $0 --help              Show this message"
     echo ""
@@ -32,7 +32,6 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
 fi
 
 if [ "$1" = "--stop" ]; then
-    # Load config early for --stop
     CONFIG_FILE="${PHONE_CODE_CONFIG:-$HOME/.phone-code-config}"
     [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
     API_URL="${PHONE_CODE_API_URL:?PHONE_CODE_API_URL not set}"
@@ -40,7 +39,6 @@ if [ "$1" = "--stop" ]; then
 
     TASK_ID="$2"
     if [ -z "$TASK_ID" ]; then
-        # Try reading from state file
         TASK_ID=$(cat $PHONE_CODE_DIR/task 2>/dev/null || echo '')
     fi
     if [ -z "$TASK_ID" ]; then
@@ -51,7 +49,7 @@ if [ "$1" = "--stop" ]; then
     ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ID', safe=''))" 2>/dev/null || echo "$TASK_ID")
     echo "Stopping session: $TASK_ID"
     curl -s -X DELETE "$API_URL/sessions?taskId=$ENCODED" -H "X-API-Key: $API_KEY"
-    rm -f $PHONE_CODE_DIR/task $PHONE_CODE_DIR/key $PHONE_CODE_DIR/key.pub
+    rm -f $PHONE_CODE_DIR/task $PHONE_CODE_DIR/key $PHONE_CODE_DIR/key.pub $PHONE_CODE_DIR/project
     echo "Session stopped."
     exit 0
 fi
@@ -77,118 +75,150 @@ GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 mkdir -p "$PHONE_CODE_DIR"
 chmod 700 "$PHONE_CODE_DIR"
 
-# Generate ephemeral SSH key
-echo "Generating SSH key..."
-rm -f $PHONE_CODE_DIR/key $PHONE_CODE_DIR/key.pub
-ssh-keygen -t ed25519 -f $PHONE_CODE_DIR/key -N "" -C "phone-code-session" -q
-PUBKEY=$(cat $PHONE_CODE_DIR/key.pub)
-echo "Key generated."
+# ── Check for existing session to reconnect ──────────────────
 
-# Request session from Lambda
-echo "Requesting session..."
-BODY=$(jq -nc \
-    --arg project "$PROJECT" \
-    --arg pubkey "$PUBKEY" \
-    --arg github_user "$GITHUB_USER" \
-    --arg github_token "$GITHUB_TOKEN" \
-    '{project: $project, pubkey: $pubkey, github_user: $github_user, github_token: $github_token}') || {
-    echo "Error: failed to build request body (jq error)"
-    exit 1
-}
+SAVED_TASK=$(cat $PHONE_CODE_DIR/task 2>/dev/null || echo '')
+SAVED_KEY=$PHONE_CODE_DIR/key
+RECONNECT=0
 
-set +e
-HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$API_URL/sessions" \
-    -H "Content-Type: application/json" \
-    -H "X-API-Key: $API_KEY" \
-    --connect-timeout 10 \
-    -d "$BODY" 2>&1)
-CURL_EXIT=$?
-set -e
+if [ -n "$SAVED_TASK" ] && [ -f "$SAVED_KEY" ]; then
+    ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$SAVED_TASK', safe=''))" 2>/dev/null || echo "$SAVED_TASK")
 
-if [ $CURL_EXIT -ne 0 ]; then
-    echo "Error: could not reach $API_URL (curl exit $CURL_EXIT)"
-    echo "$HTTP_RESPONSE"
-    exit 1
-fi
+    set +e
+    CHECK=$(curl -s "$API_URL/sessions?taskId=$ENCODED" -H "X-API-Key: $API_KEY" 2>/dev/null || echo '{}')
+    set -e
 
-HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -1)
-RESPONSE_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
-
-if [ "$HTTP_CODE" != "202" ]; then
-    echo "API returned HTTP $HTTP_CODE:"
-    echo "$RESPONSE_BODY"
-    exit 1
-fi
-
-echo "$RESPONSE_BODY" | jq .
-
-HOST=$(echo "$RESPONSE_BODY" | jq -r '.host // empty')
-TASK_ARN=$(echo "$RESPONSE_BODY" | jq -r '.task_arn // empty')
-ERROR=$(echo "$RESPONSE_BODY" | jq -r '.error // empty')
-
-if [ -n "$ERROR" ]; then
-    echo "Error: $ERROR"
-    exit 1
-fi
-
-echo "Waiting for container to start..."
-ENCODED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ARN', safe=''))" 2>/dev/null || echo "$TASK_ARN")
-MAX_WAIT=30
-for i in $(seq 1 $MAX_WAIT); do
-    sleep 3
-    CHECK=$(curl -s "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" 2>/dev/null || echo '{}')
-    HOST=$(echo "$CHECK" | jq -r '.host // empty')
     STATUS=$(echo "$CHECK" | jq -r '.status // empty')
+    HOST=$(echo "$CHECK" | jq -r '.host // empty')
 
-    if [ "$STATUS" = "RUNNING" ] && [ -n "$HOST" ] && [ "$HOST" != "pending" ] && [ "$HOST" != "resolving" ]; then
-        if echo "$HOST" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)'; then
-            echo "  Private IP (waiting for public)..."
-            continue
+    if [ "$STATUS" = "RUNNING" ] && [ -n "$HOST" ] && [ "$HOST" != "pending" ] && [ "$HOST" != "resolving" ] && ! echo "$HOST" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)'; then
+        echo "Existing session found: $SAVED_TASK"
+        echo "Reconnecting to $HOST..."
+        RECONNECT=1
+    else
+        # Session is gone — clean up stale state
+        rm -f $PHONE_CODE_DIR/task $PHONE_CODE_DIR/key $PHONE_CODE_DIR/key.pub $PHONE_CODE_DIR/project
+    fi
+fi
+
+# ── New session (if no reconnect) ────────────────────────────
+
+if [ "$RECONNECT" -eq 0 ]; then
+    echo "Generating SSH key..."
+    rm -f $SAVED_KEY $SAVED_KEY.pub
+    ssh-keygen -t ed25519 -f $SAVED_KEY -N "" -C "phone-code-session" -q
+    PUBKEY=$(cat $SAVED_KEY.pub)
+    echo "Key generated."
+
+    echo "Requesting session..."
+    BODY=$(jq -nc \
+        --arg project "$PROJECT" \
+        --arg pubkey "$PUBKEY" \
+        --arg github_user "$GITHUB_USER" \
+        --arg github_token "$GITHUB_TOKEN" \
+        '{project: $project, pubkey: $pubkey, github_user: $github_user, github_token: $github_token}') || {
+        echo "Error: failed to build request body (jq error)"
+        exit 1
+    }
+
+    set +e
+    HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$API_URL/sessions" \
+        -H "Content-Type: application/json" \
+        -H "X-API-Key: $API_KEY" \
+        --connect-timeout 10 \
+        -d "$BODY" 2>&1)
+    CURL_EXIT=$?
+    set -e
+
+    if [ $CURL_EXIT -ne 0 ]; then
+        echo "Error: could not reach $API_URL (curl exit $CURL_EXIT)"
+        echo "$HTTP_RESPONSE"
+        exit 1
+    fi
+
+    HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -1)
+    RESPONSE_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+
+    if [ "$HTTP_CODE" != "202" ]; then
+        echo "API returned HTTP $HTTP_CODE:"
+        echo "$RESPONSE_BODY"
+        exit 1
+    fi
+
+    echo "$RESPONSE_BODY" | jq .
+
+    HOST=$(echo "$RESPONSE_BODY" | jq -r '.host // empty')
+    TASK_ARN=$(echo "$RESPONSE_BODY" | jq -r '.task_arn // empty')
+    ERROR=$(echo "$RESPONSE_BODY" | jq -r '.error // empty')
+
+    if [ -n "$ERROR" ]; then
+        echo "Error: $ERROR"
+        exit 1
+    fi
+
+    # Save task ARN and project for reconnect
+    echo "$TASK_ARN" > $PHONE_CODE_DIR/task
+    echo "$PROJECT" > $PHONE_CODE_DIR/project
+
+    echo "Waiting for container to start..."
+    ENCODED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ARN', safe=''))" 2>/dev/null || echo "$TASK_ARN")
+    MAX_WAIT=30
+    for i in $(seq 1 $MAX_WAIT); do
+        sleep 3
+        CHECK=$(curl -s "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" 2>/dev/null || echo '{}')
+        HOST=$(echo "$CHECK" | jq -r '.host // empty')
+        STATUS=$(echo "$CHECK" | jq -r '.status // empty')
+
+        if [ "$STATUS" = "RUNNING" ] && [ -n "$HOST" ] && [ "$HOST" != "pending" ] && [ "$HOST" != "resolving" ]; then
+            if echo "$HOST" | grep -qE '^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)'; then
+                echo "  Private IP (waiting for public)..."
+                continue
+            fi
+            echo "  Ready: $HOST"
+            break
         fi
-        echo "  Ready: $HOST"
-        break
-    fi
-    echo "  $((i * 3))s: $STATUS"
-done
+        echo "  $((i * 3))s: $STATUS"
+    done
 
-if [ "$HOST" = "pending" ] || [ "$HOST" = "resolving" ] || [ -z "$HOST" ]; then
-    echo "Failed to resolve container IP. Task: $TASK_ARN"
-    echo "You can manually check: aws ecs describe-tasks --cluster phone-code --tasks $TASK_ARN"
-    exit 1
+    if [ "$HOST" = "pending" ] || [ "$HOST" = "resolving" ] || [ -z "$HOST" ]; then
+        echo "Failed to resolve container IP. Task: $TASK_ARN"
+        echo "You can manually check: aws ecs describe-tasks --cluster phone-code --tasks $TASK_ARN"
+        exit 1
+    fi
+
+    # Wait for SSH to be ready
+    echo "Waiting for SSH on $HOST:2222..."
+    SSH_READY=0
+    for i in $(seq 1 25); do
+        if nc -z -w 3 "$HOST" 2222 2>/dev/null; then
+            echo "  SSH ready after $((i * 3))s"
+            SSH_READY=1
+            break
+        fi
+        sleep 3
+    done
+
+    if [ "$SSH_READY" -eq 0 ]; then
+        echo "Warning: SSH port not responding, but attempting connection anyway..."
+    fi
+
+    echo ""
+    echo "Connecting to $PROJECT on $HOST..."
+    echo "Sessions stays alive 15 min after disconnect. Reconnect: $0 $PROJECT"
+    echo "Type 'exit' or Ctrl+D when done."
+    echo ""
+else
+    # Reconnecting — just SSH with saved key
+    echo ""
+    echo "Session stays alive 15 min after disconnect. Reconnect: $0 $PROJECT"
+    echo ""
 fi
 
-# Save task ARN for --stop
-echo "$TASK_ARN" > $PHONE_CODE_DIR/task
-ENCODED_ARN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TASK_ARN', safe=''))" 2>/dev/null || echo "$TASK_ARN")
+# SSH into the container
+ssh -t -i $SAVED_KEY -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o IdentitiesOnly=yes -o PasswordAuthentication=no phonecoder@"$HOST" || true
 
-# Wait for SSH to be ready
-echo "Waiting for SSH on $HOST:2222..."
-SSH_READY=0
-for i in $(seq 1 25); do
-    if nc -z -w 3 "$HOST" 2222 2>/dev/null; then
-        echo "  SSH ready after $((i * 3))s"
-        SSH_READY=1
-        break
-    fi
-    sleep 3
-done
-
-if [ "$SSH_READY" -eq 0 ]; then
-    echo "Warning: SSH port not responding, but attempting connection anyway..."
-fi
-
+# Session kept alive — do NOT call DELETE
 echo ""
-echo "Connecting to $PROJECT on $HOST..."
-echo "Session branch will be created automatically."
-echo "Type 'exit' or Ctrl+D when done."
-echo ""
-
-# SSH into the container (ignore connection errors so cleanup runs)
-ssh -t -i $PHONE_CODE_DIR/key -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o IdentitiesOnly=yes -o PasswordAuthentication=no phonecoder@"$HOST" || true
-
-# Cleanup on exit
-echo ""
-echo "Session ended. Cleaning up..."
-curl -s -X DELETE "$API_URL/sessions?taskId=$ENCODED_ARN" -H "X-API-Key: $API_KEY" > /dev/null 2>&1 || true
-rm -f $PHONE_CODE_DIR/task $PHONE_CODE_DIR/key $PHONE_CODE_DIR/key.pub
-echo "Done."
+echo "Session still running (auto-stop after 15 min idle)."
+echo "Reconnect: $0 $PROJECT"
+echo "Force stop: $0 --stop"

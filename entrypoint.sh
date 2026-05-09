@@ -112,12 +112,14 @@ AUTHJSON
 EOFCFG
     "
 
-    # Launch auto-push in background
-    cat > /home/phonecoder/auto-push.sh << 'PUSHSCRIPT'
+    # Launch watchdog in background (save every 5 min, auto-stop after 15 min idle)
+    cat > /home/phonecoder/watchdog.sh << 'WATCHDOG'
 #!/bin/bash
-PUSH_INTERVAL="${PUSH_INTERVAL:-300}"
-while true; do
-    sleep "$PUSH_INTERVAL"
+PROJECT_DIR="$1"
+IDLE_MAX=180   # 15 minutes in 5-second ticks
+IDLE=0
+
+save_and_push() {
     if git rev-parse --git-dir > /dev/null 2>&1; then
         if ! git diff --quiet || ! git diff --cached --quiet; then
             git add -A
@@ -128,10 +130,31 @@ while true; do
             git push origin "$CURRENT_BRANCH" 2>/dev/null || git push -u origin "$CURRENT_BRANCH" 2>/dev/null
         fi
     fi
+}
+
+while true; do
+    for i in $(seq 1 60); do    # 60 * 5s = 5 minutes
+        sleep 5
+        if who | grep -q phonecoder; then
+            IDLE=0
+        else
+            IDLE=$((IDLE + 1))
+            if [ $IDLE -ge $IDLE_MAX ]; then
+                echo "[watchdog] no connections for 15 min, saving and shutting down..."
+                save_and_push
+                exit 0
+            fi
+        fi
+    done
+    save_and_push
 done
-PUSHSCRIPT
-    chmod +x /home/phonecoder/auto-push.sh
-    su - phonecoder -c "cd /workspace/$PROJECT && /home/phonecoder/auto-push.sh &"
+WATCHDOG
+    chmod +x /home/phonecoder/watchdog.sh
+    chown phonecoder:phonecoder /home/phonecoder/watchdog.sh
+
+    # Start watchdog as phonecoder in the repo directory
+    su - phonecoder -c "cd /workspace/$PROJECT && /home/phonecoder/watchdog.sh &"
+    WATCHDOG_PID=$!
 fi
 
 # Write motd with session info
@@ -144,6 +167,7 @@ Repo:    /workspace/$PROJECT
 
 Type 'opencode' to start coding.
 Auto-push is running every 5 minutes.
+Session auto-stops after 15 min idle.
 MOTD
 else
     cat > /etc/motd << MOTD
@@ -188,5 +212,9 @@ chown phonecoder:phonecoder /home/phonecoder/.bashrc /home/phonecoder/.phone-pro
 
 echo "Container ready. Waiting for SSH connections..."
 
-# Keep container alive
-tail -f /var/log/auth.log 2>/dev/null || sleep infinity
+# Keep container alive until watchdog exits (idle timeout) or forever if no repo
+if [ -n "${WATCHDOG_PID:-}" ]; then
+    wait "$WATCHDOG_PID" 2>/dev/null
+else
+    tail -f /var/log/auth.log 2>/dev/null || sleep infinity
+fi
