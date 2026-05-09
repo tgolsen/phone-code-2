@@ -53,8 +53,14 @@ if [ "$REPO_OK" -eq 1 ]; then
     chown -R phonecoder:phonecoder /workspace/"$PROJECT"
     HAS_REPO=1
 
-    # Create session branch
-    git checkout -b "$BRANCH_NAME" 2>/dev/null || git checkout "$BRANCH_NAME" 2>/dev/null || true
+    # Create session branch (branch first, then checkout — avoids silent failures)
+    if ! git branch "$BRANCH_NAME" 2>/dev/null; then
+        echo "Warning: could not create branch $BRANCH_NAME"
+    elif git checkout "$BRANCH_NAME" 2>/dev/null; then
+        echo "Session branch: $BRANCH_NAME"
+    else
+        echo "Warning: created branch $BRANCH_NAME but could not check it out"
+    fi
 
     # Fetch opencode API key from Secrets Manager
     if [ -n "$OPENCODE_SECRET_ARN" ]; then
