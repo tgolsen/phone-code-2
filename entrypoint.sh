@@ -155,10 +155,9 @@ while true; do
 done
 WATCHDOG
     chmod +x /home/phonecoder/watchdog.sh
-    chown phonecoder:phonecoder /home/phonecoder/watchdog.sh
 
-    # Start watchdog as phonecoder in the repo directory
-    su - phonecoder -c "cd /workspace/$PROJECT && /home/phonecoder/watchdog.sh" &
+    # Start watchdog as root in the repo directory (git auth via env, no su needed)
+    cd "/workspace/$PROJECT" && /home/phonecoder/watchdog.sh &
     WATCHDOG_PID=$!
 fi
 
