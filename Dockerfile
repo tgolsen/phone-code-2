@@ -39,7 +39,7 @@ RUN mkdir -p /var/run/sshd \
     && sed -i 's/^#*PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
     && sed -i 's|^#*AuthorizedKeysFile[[:space:]].*|AuthorizedKeysFile .ssh/authorized_keys|' /etc/ssh/sshd_config \
     && echo "ClientAliveInterval 30" >> /etc/ssh/sshd_config \
-    && echo "ClientAliveCountMax 2" >> /etc/ssh/sshd_config
+    && echo "ClientAliveCountMax 6" >> /etc/ssh/sshd_config
 
 # Non-root user for SSH sessions
 RUN useradd -m -s /bin/bash phonecoder \

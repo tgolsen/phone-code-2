@@ -132,10 +132,15 @@ save_and_push() {
     fi
 }
 
+# Count non-LISTEN TCP connections on port 2222 (port 08AE in hex)
+active_connections() {
+    awk '$2 ~ /:08AE$/ && $4 != "0A" {n++} END {print n+0}' /proc/net/tcp
+}
+
 while true; do
     for i in $(seq 1 60); do    # 60 * 5s = 5 minutes
         sleep 5
-        if who | grep -q phonecoder; then
+        if [ "$(active_connections)" -gt 0 ]; then
             IDLE=0
         else
             IDLE=$((IDLE + 1))
@@ -153,7 +158,7 @@ WATCHDOG
     chown phonecoder:phonecoder /home/phonecoder/watchdog.sh
 
     # Start watchdog as phonecoder in the repo directory
-    su - phonecoder -c "cd /workspace/$PROJECT && /home/phonecoder/watchdog.sh &"
+    su - phonecoder -c "cd /workspace/$PROJECT && /home/phonecoder/watchdog.sh" &
     WATCHDOG_PID=$!
 fi
 
