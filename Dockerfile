@@ -1,23 +1,14 @@
-FROM ubuntu:22.04
+FROM node:22-alpine
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV NODE_VERSION=22
-
-# System packages: git, sshd, shellcheck, curl, awscli deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+# System packages: git, sshd, shellcheck, jq
+RUN apk add --no-cache \
+    bash \
     curl \
     git \
     jq \
     openssh-server \
-    shellcheck \
-    unzip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Node.js via nodesource
-RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    openssh-keygen \
+    shellcheck
 
 # opencode
 RUN npm install -g opencode-ai
@@ -25,14 +16,9 @@ RUN npm install -g opencode-ai
 # Pre-install opencode AI provider packages (avoids slow first launch)
 RUN npm install -g @ai-sdk/openai-compatible
 
-# AWS CLI v2
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip \
-    && unzip -q /tmp/awscliv2.zip -d /tmp \
-    && /tmp/aws/install \
-    && rm -rf /tmp/aws /tmp/awscliv2.zip
-
 # SSH configuration — key-only auth, no root, non-standard port
-RUN mkdir -p /var/run/sshd \
+RUN ssh-keygen -A \
+    && mkdir -p /var/run/sshd \
     && sed -i 's/^#*Port .*/Port 2222/' /etc/ssh/sshd_config \
     && sed -i 's/^#*PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config \
     && sed -i 's/^#*PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config \
@@ -42,7 +28,7 @@ RUN mkdir -p /var/run/sshd \
     && echo "ClientAliveCountMax 6" >> /etc/ssh/sshd_config
 
 # Non-root user for SSH sessions
-RUN useradd -m -s /bin/bash phonecoder \
+RUN adduser -D -s /bin/bash phonecoder \
     && mkdir -p /home/phonecoder/.ssh \
     && chmod 700 /home/phonecoder/.ssh \
     && chown -R phonecoder:phonecoder /home/phonecoder/.ssh

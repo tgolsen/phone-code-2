@@ -6,7 +6,6 @@ PROJECT="${PROJECT:?PROJECT required}"
 GITHUB_USER="${GITHUB_USER:?GITHUB_USER required}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 BRANCH_NAME="mobile-$(date +%Y%m%d-%H%M%S)"
-OPENCODE_SECRET_ARN="${OPENCODE_SECRET_ARN:-}"
 REPO_URL="https://${GITHUB_USER}@github.com/${GITHUB_USER}/${PROJECT}.git"
 
 echo "=== Phone Code Container ==="
@@ -56,27 +55,18 @@ if [ "$REPO_OK" -eq 1 ]; then
     # Create session branch
     git checkout -b "$BRANCH_NAME" 2>/dev/null || git checkout "$BRANCH_NAME" 2>/dev/null || true
 
-    # Fetch opencode API key from Secrets Manager
-    if [ -n "$OPENCODE_SECRET_ARN" ]; then
-        echo "Fetching opencode API key..."
-        aws secretsmanager get-secret-value --secret-id "$OPENCODE_SECRET_ARN" --query SecretString --output text > /tmp/opencode-secrets.json 2>/dev/null || true
-
-        DEEPSEEK_KEY=$(jq -r '.DEEPSEEK_API_KEY // empty' /tmp/opencode-secrets.json 2>/dev/null || echo '')
-
-        if [ -n "$DEEPSEEK_KEY" ]; then
-            export DEEPSEEK_API_KEY="${DEEPSEEK_KEY}"
-            su - phonecoder -c "mkdir -p ~/.local/share/opencode && cat > ~/.local/share/opencode/auth.json" << AUTHJSON
+    # Set up opencode API key (passed by Lambda via env var)
+    if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+        su - phonecoder -c "mkdir -p ~/.local/share/opencode && cat > ~/.local/share/opencode/auth.json" << AUTHJSON
 {
     "deepseek": {
         "type": "api",
-        "key": "${DEEPSEEK_KEY}"
+        "key": "${DEEPSEEK_API_KEY}"
     }
 }
 AUTHJSON
-            chown phonecoder:phonecoder /home/phonecoder/.local/share/opencode/auth.json
-            chmod 600 /home/phonecoder/.local/share/opencode/auth.json
-        fi
-        rm -f /tmp/opencode-secrets.json
+        chown phonecoder:phonecoder /home/phonecoder/.local/share/opencode/auth.json
+        chmod 600 /home/phonecoder/.local/share/opencode/auth.json
     fi
 
     # Set up opencode profile for phonecoder
@@ -189,16 +179,10 @@ fi
 # Create .bashrc that auto-launches opencode on login (if repo ok)
 echo "$PROJECT" > /home/phonecoder/.phone-project
 
-# .bash_profile ensures .bashrc runs for SSH login shells
+# .bash_profile: login shell → show MOTD → launch opencode
 cat > /home/phonecoder/.bash_profile << 'PROFILE'
 if [ -f ~/.bashrc ]; then
     . ~/.bashrc
-fi
-PROFILE
-
-cat > /home/phonecoder/.bashrc << 'BASHRC'
-if [ -f /etc/bashrc ]; then
-    . /etc/bashrc
 fi
 cat /etc/motd
 PROJECT=$(cat /home/phonecoder/.phone-project 2>/dev/null || echo '')
@@ -211,8 +195,16 @@ else
     echo "No project cloned. Clone one manually:"
     echo "  git clone https://github.com/your-org/your-repo.git"
 fi
+PROFILE
+
+# .bashrc: all interactive shells — env setup only, no opencode launch
+cat > /home/phonecoder/.bashrc << 'BASHRC'
+if [ -f /etc/bashrc ]; then
+    . /etc/bashrc
+fi
+export PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 BASHRC
-chown phonecoder:phonecoder /home/phonecoder/.bashrc /home/phonecoder/.phone-project
+chown phonecoder:phonecoder /home/phonecoder/.bashrc /home/phonecoder/.bash_profile /home/phonecoder/.phone-project
 
 echo "Container ready. Waiting for SSH connections..."
 

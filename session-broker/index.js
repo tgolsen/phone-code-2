@@ -1,7 +1,9 @@
 const { ECSClient, RunTaskCommand, DescribeTasksCommand, StopTaskCommand } = require('@aws-sdk/client-ecs');
 const { EC2Client, DescribeNetworkInterfacesCommand } = require('@aws-sdk/client-ec2');
+const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 
 const ecs = new ECSClient();
+const sm = new SecretsManagerClient();
 
 const CLUSTER = process.env.ECS_CLUSTER || 'phone-code';
 const TASK_DEFINITION = process.env.ECS_TASK_DEFINITION || 'phone-code-session';
@@ -24,17 +26,34 @@ function validateAuth(event) {
     return provided === API_KEY;
 }
 
+const OPENCODE_SECRET_ARN = process.env.OPENCODE_SECRET_ARN || '';
+
 async function runTask(pubkey, project, githubUser, githubToken) {
+    const environment = [
+        { name: 'PUBKEY', value: pubkey },
+        { name: 'PROJECT', value: project },
+        { name: 'GITHUB_USER', value: githubUser },
+        { name: 'GITHUB_TOKEN', value: githubToken || '' },
+    ];
+
+    // Fetch opencode API key from Secrets Manager (keeps it off the image)
+    if (OPENCODE_SECRET_ARN) {
+        try {
+            const secret = await sm.send(new GetSecretValueCommand({ SecretId: OPENCODE_SECRET_ARN }));
+            const parsed = JSON.parse(secret.SecretString || '{}');
+            if (parsed.DEEPSEEK_API_KEY) {
+                environment.push({ name: 'DEEPSEEK_API_KEY', value: parsed.DEEPSEEK_API_KEY });
+            }
+        } catch (e) {
+            console.error('Warning: could not fetch opencode secret:', e.message);
+        }
+    }
+
     const overrides = {
         containerOverrides: [
             {
                 name: TASK_DEFINITION,
-                environment: [
-                    { name: 'PUBKEY', value: pubkey },
-                    { name: 'PROJECT', value: project },
-                    { name: 'GITHUB_USER', value: githubUser },
-                    { name: 'GITHUB_TOKEN', value: githubToken || '' },
-                ],
+                environment,
             },
         ],
     };

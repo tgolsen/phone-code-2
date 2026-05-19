@@ -191,9 +191,6 @@ resource "aws_ecs_task_definition" "session" {
       hostPort      = 2222
       protocol      = "tcp"
     }]
-    environment = [
-      { name = "OPENCODE_SECRET_ARN", value = aws_secretsmanager_secret.opencode.arn },
-    ]
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -277,6 +274,11 @@ resource "aws_iam_role_policy" "lambda" {
         Resource = ["*"]
       },
       {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [aws_secretsmanager_secret.opencode.arn]
+      },
+      {
         Effect = "Allow"
         Action = [
           "logs:CreateLogStream",
@@ -308,6 +310,7 @@ resource "aws_lambda_function" "broker" {
       DEFAULT_GITHUB_USER  = var.default_github_user
       DEFAULT_GITHUB_TOKEN = var.github_token
       ASSIGN_PUBLIC_IP     = "true"
+      OPENCODE_SECRET_ARN  = aws_secretsmanager_secret.opencode.arn
     }
   }
 }
